@@ -24,14 +24,14 @@ local function simplify_diffview_window()
   vim.wo.cursorline = false
 end
 
-local function hover_clients(bufnr)
+local function lsp_clients(bufnr, method)
   return vim.tbl_filter(function(client)
-    return client:supports_method('textDocument/hover', bufnr)
+    return client:supports_method(method, bufnr)
   end, vim.lsp.get_clients { bufnr = bufnr })
 end
 
-local function notify_no_diffview_hover()
-  vim.notify('No LSP hover available for this Diffview buffer', vim.log.levels.WARN)
+local function notify_no_diffview_lsp(action)
+  vim.notify(('No LSP %s available for this Diffview buffer'):format(action), vim.log.levels.WARN)
 end
 
 local function worktree_path_from_diffview_buffer(bufnr)
@@ -47,6 +47,7 @@ end
 
 local function load_worktree_buffer(path)
   local bufnr = vim.fn.bufadd(path)
+  vim.bo[bufnr].swapfile = false
   vim.fn.bufload(bufnr)
 
   vim.api.nvim_buf_call(bufnr, function()
@@ -68,6 +69,14 @@ local function attach_matching_lsp_clients(bufnr)
 
     if filetype_matches and root_matches then pcall(vim.lsp.buf_attach_client, bufnr, client.id) end
   end
+end
+
+local function current_byte_position()
+  local position = vim.api.nvim_win_get_cursor(0)
+  return {
+    line = math.max(position[1] - 1, 0),
+    character = position[2],
+  }
 end
 
 local function source_position_in_target_buffer(target_bufnr)
@@ -99,6 +108,41 @@ local function source_position_in_target_buffer(target_bufnr)
   }
 end
 
+local function lsp_position_params(bufnr, byte_position, client, extra)
+  local params = {
+    textDocument = { uri = vim.uri_from_bufnr(bufnr) },
+    position = {
+      line = byte_position.line,
+      character = vim.lsp.util.character_offset(
+        bufnr,
+        byte_position.line,
+        byte_position.character,
+        client.offset_encoding
+      ),
+    },
+  }
+
+  if extra then params = vim.tbl_deep_extend('force', params, extra) end
+
+  return params
+end
+
+local function diffview_lsp_target(method, action)
+  local bufnr = vim.api.nvim_get_current_buf()
+  if #lsp_clients(bufnr, method) > 0 then return bufnr, current_byte_position() end
+
+  local path = worktree_path_from_diffview_buffer(bufnr)
+  if not path then
+    notify_no_diffview_lsp(action)
+    return
+  end
+
+  local target_bufnr = load_worktree_buffer(path)
+  attach_matching_lsp_clients(target_bufnr)
+
+  return target_bufnr, source_position_in_target_buffer(target_bufnr)
+end
+
 local function hover_preview_lines(result)
   if not (result and result.contents) then return false end
 
@@ -117,12 +161,12 @@ local function open_hover_preview(lines)
 end
 
 local function request_hover_from_buffer(bufnr, position, attempt)
-  local clients = hover_clients(bufnr)
+  local clients = lsp_clients(bufnr, 'textDocument/hover')
   if #clients == 0 then
     if attempt == 1 then
       vim.defer_fn(function() request_hover_from_buffer(bufnr, position, 2) end, 150)
     else
-      notify_no_diffview_hover()
+      notify_no_diffview_lsp('hover')
     end
     return
   end
@@ -131,10 +175,7 @@ local function request_hover_from_buffer(bufnr, position, attempt)
   local shown = false
 
   for _, client in ipairs(clients) do
-    local params = {
-      textDocument = { uri = vim.uri_from_bufnr(bufnr) },
-      position = position,
-    }
+    local params = lsp_position_params(bufnr, position, client)
 
     client:request('textDocument/hover', params, function(err, result)
       if shown then return end
@@ -148,27 +189,130 @@ local function request_hover_from_buffer(bufnr, position, attempt)
         end
       end
 
-      if remaining == 0 and not shown then vim.schedule(notify_no_diffview_hover) end
+      if remaining == 0 and not shown then
+        vim.schedule(function() notify_no_diffview_lsp 'hover' end)
+      end
     end, bufnr)
   end
 end
 
 local function diffview_hover()
-  local bufnr = vim.api.nvim_get_current_buf()
-  if #hover_clients(bufnr) > 0 then
-    vim.lsp.buf.hover()
+  local bufnr, position = diffview_lsp_target('textDocument/hover', 'hover')
+  if not bufnr then return end
+
+  request_hover_from_buffer(bufnr, position, 1)
+end
+
+local function open_lsp_location(location, offset_encoding)
+  local uri = location.uri or location.targetUri
+  if uri then vim.cmd('tab drop ' .. vim.fn.fnameescape(vim.uri_to_fname(uri))) end
+
+  vim.lsp.util.show_document(location, offset_encoding, { reuse_win = true, focus = true })
+end
+
+local function handle_lsp_locations(title, items, first_location, first_encoding)
+  if vim.tbl_isempty(items) then
+    vim.notify(('No %s found'):format(title), vim.log.levels.INFO)
     return
   end
 
-  local path = worktree_path_from_diffview_buffer(bufnr)
-  if not path then
-    notify_no_diffview_hover()
+  if #items == 1 and first_location and first_encoding then
+    open_lsp_location(first_location, first_encoding)
     return
   end
 
-  local target_bufnr = load_worktree_buffer(path)
-  attach_matching_lsp_clients(target_bufnr)
-  request_hover_from_buffer(target_bufnr, source_position_in_target_buffer(target_bufnr), 1)
+  vim.fn.setqflist({}, ' ', { title = title, items = items })
+  vim.cmd 'botright copen'
+end
+
+local function request_locations_from_buffer(bufnr, position, method, action, title, extra, attempt)
+  local clients = lsp_clients(bufnr, method)
+  if #clients == 0 then
+    if attempt == 1 then
+      vim.defer_fn(function()
+        request_locations_from_buffer(bufnr, position, method, action, title, extra, 2)
+      end, 150)
+    else
+      notify_no_diffview_lsp(action)
+    end
+    return
+  end
+
+  local remaining = #clients
+  local items = {}
+  local first_location
+  local first_encoding
+
+  for _, client in ipairs(clients) do
+    local params = lsp_position_params(bufnr, position, client, extra)
+
+    client:request(method, params, function(err, result)
+      remaining = remaining - 1
+
+      if not err and result then
+        local locations = vim.islist(result) and result or { result }
+        if not vim.tbl_isempty(locations) then
+          first_location = first_location or locations[1]
+          first_encoding = first_encoding or client.offset_encoding
+          vim.list_extend(
+            items,
+            vim.lsp.util.locations_to_items(locations, client.offset_encoding)
+          )
+        end
+      end
+
+      if remaining == 0 then
+        vim.schedule(function()
+          handle_lsp_locations(title, items, first_location, first_encoding)
+        end)
+      end
+    end, bufnr)
+  end
+end
+
+local function diffview_lsp_locations(method, action, title, extra)
+  return function()
+    local bufnr, position = diffview_lsp_target(method, action)
+    if not bufnr then return end
+
+    request_locations_from_buffer(bufnr, position, method, action, title, extra, 1)
+  end
+end
+
+local function set_diffview_lsp_keymaps()
+  vim.keymap.set('n', 'K', diffview_hover, { buffer = true, desc = 'Show hover documentation' })
+  vim.keymap.set(
+    'n',
+    'grd',
+    diffview_lsp_locations('textDocument/definition', 'definition', 'LSP definitions'),
+    { buffer = true, desc = 'LSP: [G]oto [D]efinition' }
+  )
+  vim.keymap.set(
+    'n',
+    'gri',
+    diffview_lsp_locations('textDocument/implementation', 'implementation', 'LSP implementations'),
+    { buffer = true, desc = 'LSP: [G]oto [I]mplementation' }
+  )
+  vim.keymap.set(
+    'n',
+    'grt',
+    diffview_lsp_locations('textDocument/typeDefinition', 'type definition', 'LSP type definitions'),
+    { buffer = true, desc = 'LSP: [G]oto [T]ype Definition' }
+  )
+  vim.keymap.set(
+    'n',
+    'grD',
+    diffview_lsp_locations('textDocument/declaration', 'declaration', 'LSP declarations'),
+    { buffer = true, desc = 'LSP: [G]oto [D]eclaration' }
+  )
+  vim.keymap.set(
+    'n',
+    'grr',
+    diffview_lsp_locations('textDocument/references', 'references', 'LSP references', {
+      context = { includeDeclaration = true },
+    }),
+    { buffer = true, desc = 'LSP: [G]oto [R]eferences' }
+  )
 end
 
 require('diffview').setup {
@@ -178,7 +322,7 @@ require('diffview').setup {
   hooks = {
     diff_buf_read = function()
       simplify_diffview_window()
-      vim.keymap.set('n', 'K', diffview_hover, { buffer = true, desc = 'Show hover documentation' })
+      set_diffview_lsp_keymaps()
     end,
     diff_buf_win_enter = function()
       simplify_diffview_window()
