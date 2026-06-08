@@ -701,6 +701,17 @@ do
 
     stylua = {}, -- Used to format Lua code
 
+    postgres_lsp = {
+      cmd = {
+        'postgres-language-server',
+        'lsp-proxy',
+        '--config-path',
+        vim.fs.joinpath(vim.fn.stdpath 'config', 'postgres-language-server-supabase-local.jsonc'),
+      },
+      root_markers = { 'postgres-language-server.jsonc', 'supabase/config.toml', '.git' },
+      workspace_required = true,
+    },
+
     -- Special Lua Config, as recommended by neovim help docs
     lua_ls = {
       on_init = function(client)
