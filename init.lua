@@ -519,6 +519,154 @@ do
   vim.keymap.set('n', '<leader>sc', builtin.commands, { desc = '[S]earch [C]ommands' })
   vim.keymap.set('n', '<leader><leader>', builtin.buffers, { desc = '[ ] Find existing buffers' })
 
+  local function lsp_clients_support_method(bufnr, method)
+    for _, client in ipairs(vim.lsp.get_clients { bufnr = bufnr }) do
+      if client:supports_method(method, bufnr) then return true end
+    end
+    return false
+  end
+
+  local function escape_for_lua_pattern(text)
+    return text:gsub('([^%w_])', '%%%1')
+  end
+
+  local function escape_for_rg_regex(text)
+    return text:gsub('([^%w_])', '\\%1')
+  end
+
+  local function context_for_line(path, line_number)
+    local ok, lines = pcall(vim.fn.readfile, path)
+    if not ok then return '' end
+
+    local context = {}
+    for lnum = math.max(1, line_number - 4), math.min(#lines, line_number + 2) do
+      table.insert(context, lines[lnum])
+    end
+    return table.concat(context, '\n')
+  end
+
+  local function sql_definition_score(match)
+    local name = escape_for_lua_pattern(match.name:lower())
+    local context = context_for_line(match.path, match.line):lower()
+    local prefix = '["%w_%.]*'
+    local score = 0
+
+    if context:match('create%s+or%s+replace%s+function%s+' .. prefix .. name .. '%s*%(') then score = 100 end
+    if context:match('create%s+function%s+' .. prefix .. name .. '%s*%(') then score = math.max(score, 100) end
+    if context:match('create%s+or%s+replace%s+procedure%s+' .. prefix .. name .. '%s*%(') then score = math.max(score, 95) end
+    if context:match('create%s+procedure%s+' .. prefix .. name .. '%s*%(') then score = math.max(score, 95) end
+    if context:match('create%s+trigger%s+' .. prefix .. name .. '%s') then score = math.max(score, 90) end
+    if context:match('create%s+or%s+replace%s+view%s+' .. prefix .. name .. '%s') then score = math.max(score, 80) end
+    if context:match('create%s+table%s+' .. prefix .. name .. '%s') then score = math.max(score, 75) end
+    if context:match('create%s+type%s+' .. prefix .. name .. '%s') then score = math.max(score, 70) end
+
+    if score > 0 and match.path:find('/supabase/', 1, true) then score = score + 5 end
+    return score
+  end
+
+  local function jump_to_sql_definition(match)
+    vim.cmd "normal! m'"
+    vim.cmd.edit(vim.fn.fnameescape(match.path))
+    vim.api.nvim_win_set_cursor(0, { match.line, math.max(match.col - 1, 0) })
+    vim.cmd 'normal! zvzz'
+  end
+
+  local function set_sql_definition_qflist(matches, title)
+    local items = {}
+    for _, match in ipairs(matches) do
+      table.insert(items, {
+        filename = match.path,
+        lnum = match.line,
+        col = match.col,
+        text = match.text:gsub('%s+$', ''),
+      })
+    end
+
+    vim.fn.setqflist({}, ' ', { title = title, items = items })
+    vim.cmd.copen()
+  end
+
+  local function goto_sql_definition_from_files(bufnr)
+    local name = vim.fn.expand '<cword>'
+    if name == '' then
+      vim.notify('No SQL identifier under cursor', vim.log.levels.WARN)
+      return
+    end
+
+    if vim.fn.executable 'rg' ~= 1 then
+      builtin.grep_string { search = name }
+      return
+    end
+
+    local root = vim.fs.root(bufnr, { 'supabase/config.toml', 'postgres-language-server.jsonc', '.git' }) or vim.fn.getcwd()
+    local result = vim.system({
+      'rg',
+      '--json',
+      '--hidden',
+      '--glob',
+      '*.sql',
+      '--glob',
+      '!**/.git/**',
+      '--ignore-case',
+      escape_for_rg_regex(name),
+      root,
+    }, { text = true }):wait()
+
+    if result.code > 1 then
+      vim.notify(('SQL definition search failed: %s'):format(result.stderr), vim.log.levels.ERROR)
+      return
+    end
+
+    local matches = {}
+    for line in result.stdout:gmatch('[^\n]+') do
+      local ok, item = pcall(vim.json.decode, line)
+      if ok and item.type == 'match' then
+        local text = item.data.lines.text
+        local col = text:lower():find(name:lower(), 1, true) or 1
+        table.insert(matches, {
+          name = name,
+          path = item.data.path.text,
+          line = item.data.line_number,
+          col = col,
+          text = text,
+        })
+      end
+    end
+
+    local definitions = {}
+    for _, match in ipairs(matches) do
+      match.score = sql_definition_score(match)
+      if match.score > 0 then table.insert(definitions, match) end
+    end
+
+    table.sort(definitions, function(a, b)
+      if a.score == b.score then return a.path < b.path end
+      return a.score > b.score
+    end)
+
+    if #definitions == 1 then
+      jump_to_sql_definition(definitions[1])
+    elseif #definitions > 1 then
+      set_sql_definition_qflist(definitions, 'SQL definitions for ' .. name)
+    elseif #matches > 0 then
+      set_sql_definition_qflist(matches, 'SQL matches for ' .. name)
+      vim.notify('No CREATE statement found; showing SQL matches instead', vim.log.levels.WARN)
+    else
+      vim.notify('No SQL definition found for ' .. name, vim.log.levels.WARN)
+    end
+  end
+
+  local function goto_definition()
+    local bufnr = vim.api.nvim_get_current_buf()
+    if lsp_clients_support_method(bufnr, 'textDocument/definition') then
+      builtin.lsp_definitions()
+    elseif vim.bo[bufnr].filetype == 'sql' then
+      goto_sql_definition_from_files(bufnr)
+    else
+      vim.notify('No LSP client supports textDocument/definition', vim.log.levels.WARN)
+    end
+  end
+
   -- Add Telescope-based LSP pickers when an LSP attaches to a buffer.
   -- If you later switch picker plugins, this is where to update these mappings.
   vim.api.nvim_create_autocmd('LspAttach', {
@@ -536,7 +684,7 @@ do
       -- Jump to the definition of the word under your cursor.
       -- This is where a variable was first declared, or where a function is defined, etc.
       -- To jump back, press <C-t>.
-      vim.keymap.set('n', 'grd', builtin.lsp_definitions, { buffer = buf, desc = '[G]oto [D]efinition' })
+      vim.keymap.set('n', 'grd', goto_definition, { buffer = buf, desc = '[G]oto [D]efinition' })
 
       -- Fuzzy find all the symbols in your current document.
       -- Symbols are things like variables, functions, types, etc.
