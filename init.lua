@@ -380,23 +380,61 @@ do
   }
 
   -- [[ Colorscheme ]]
-  -- You can easily change to a different colorscheme.
-  -- Change the name of the colorscheme plugin below, and then
-  -- change the command under that to load whatever the name of that colorscheme is.
-  --
-  -- If you want to see what colorschemes are already installed, you can use `:Telescope colorscheme`.
-  vim.pack.add { gh 'folke/tokyonight.nvim' }
-  ---@diagnostic disable-next-line: missing-fields
-  require('tokyonight').setup {
-    styles = {
-      comments = { italic = false }, -- Disable italics in comments
+  vim.pack.add {
+    gh 'projekt0n/github-nvim-theme',
+    gh 'f-person/auto-dark-mode.nvim',
+  }
+
+  require('github-theme').setup {
+    options = {
+      dim_inactive = true,
+      styles = {
+        comments = 'NONE',
+      },
     },
   }
 
-  -- Load the colorscheme here.
-  -- Like many other themes, this one has different styles, and you could load
-  -- any other, such as 'tokyonight-storm', 'tokyonight-moon', or 'tokyonight-day'.
-  vim.cmd.colorscheme 'tokyonight-night'
+  local function preserve_diff_syntax_highlighting()
+    for _, group in ipairs {
+      'DiffAdd',
+      'DiffChange',
+      'DiffDelete',
+      'DiffText',
+      'DiffviewDiffAdd',
+      'DiffviewDiffAddAsDelete',
+      'DiffviewDiffChange',
+      'DiffviewDiffDelete',
+      'DiffviewDiffText',
+    } do
+      local ok, highlight = pcall(vim.api.nvim_get_hl, 0, { name = group, link = false })
+      if ok and next(highlight) then
+        highlight.fg = nil
+        highlight.ctermfg = nil
+        vim.api.nvim_set_hl(0, group, highlight)
+      end
+    end
+  end
+
+  vim.api.nvim_create_autocmd('ColorScheme', {
+    group = vim.api.nvim_create_augroup('github-theme-diff-syntax', { clear = true }),
+    pattern = 'github_*',
+    callback = function() vim.schedule(preserve_diff_syntax_highlighting) end,
+  })
+
+  local function set_github_theme(background)
+    vim.o.background = background
+    vim.cmd.colorscheme(background == 'light' and 'github_light_default' or 'github_dark_dimmed')
+    preserve_diff_syntax_highlighting()
+  end
+
+  set_github_theme(vim.o.background == 'light' and 'light' or 'dark')
+
+  require('auto-dark-mode').setup {
+    set_light_mode = function() set_github_theme 'light' end,
+    set_dark_mode = function() set_github_theme 'dark' end,
+    update_interval = 3000,
+    fallback = 'dark',
+  }
 
   -- Highlight todo, notes, etc in comments
   vim.pack.add { gh 'folke/todo-comments.nvim' }

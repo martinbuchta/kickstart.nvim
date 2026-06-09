@@ -316,6 +316,7 @@ local function set_diffview_lsp_keymaps()
 end
 
 require('diffview').setup {
+  enhanced_diff_hl = true,
   default_args = {
     DiffviewOpen = { '--imply-local' },
   },
