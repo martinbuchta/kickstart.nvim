@@ -24,6 +24,24 @@ local function simplify_diffview_window()
   vim.wo.cursorline = false
 end
 
+local function get_highlight(group)
+  local ok, highlight = pcall(vim.api.nvim_get_hl, 0, { name = group, link = false })
+  return ok and highlight or {}
+end
+
+local function highlight_diffview_delete_fillers()
+  local diff_delete = get_highlight 'DiffDelete'
+  local diff_removed = get_highlight 'diffRemoved'
+  local diagnostic_error = get_highlight 'DiagnosticError'
+  local deleted_bg = diff_delete.bg or diff_removed.bg
+  local fallback_fg = vim.o.background == 'light' and '#cf222e' or '#ff7b72'
+  local deleted_fg = diff_removed.fg or diagnostic_error.fg or fallback_fg
+
+  vim.api.nvim_set_hl(0, 'DiffviewDiffAddAsDelete', { bg = deleted_bg })
+  vim.api.nvim_set_hl(0, 'DiffviewDiffDelete', { fg = deleted_fg, bg = deleted_bg })
+  vim.api.nvim_set_hl(0, 'DiffviewDiffDeleteDim', { fg = deleted_fg, bg = deleted_bg })
+end
+
 local function lsp_clients(bufnr, method)
   return vim.tbl_filter(function(client)
     return client:supports_method(method, bufnr)
@@ -43,6 +61,153 @@ local function worktree_path_from_diffview_buffer(bufnr)
 
   local path = vim.fs.joinpath(root, relpath)
   if vim.fn.filereadable(path) == 1 then return path end
+end
+
+local function focus_previous_non_diffview_tab()
+  local ok, diffview_lib = pcall(require, 'diffview.lib')
+  local tabpage = ok and diffview_lib.get_prev_non_view_tabpage()
+
+  if tabpage then
+    vim.api.nvim_set_current_tabpage(tabpage)
+    return
+  end
+
+  vim.cmd 'tabnew'
+  return vim.api.nvim_get_current_buf()
+end
+
+local function reset_plain_file_window()
+  vim.wo.diff = false
+  vim.wo.scrollbind = false
+  vim.wo.cursorbind = false
+  vim.wo.foldenable = false
+  vim.wo.foldmethod = 'manual'
+  vim.wo.winhl = ''
+end
+
+local function delete_temp_buffer(bufnr)
+  if bufnr and vim.api.nvim_buf_is_valid(bufnr) and bufnr ~= vim.api.nvim_get_current_buf() then
+    pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
+  end
+end
+
+local function diffview_snapshot_name(name)
+  local root, context, relpath = name:match '^diffview://(.+)/%.git/([^/]+)/(.*)$'
+  if root then return ('diffview-file://%s/.git/%s/%s'):format(root, context, relpath) end
+
+  if not name:match '^diffview://' then return 'diffview-file://' .. name end
+
+  return name:gsub('^diffview://', 'diffview-file://')
+end
+
+local function diffview_snapshot_buffer(source_bufnr)
+  local source_name = vim.api.nvim_buf_get_name(source_bufnr)
+  local target_name = diffview_snapshot_name(source_name)
+  local target_bufnr = vim.fn.bufnr(target_name)
+
+  if target_bufnr == -1 then
+    target_bufnr = vim.api.nvim_create_buf(true, false)
+    vim.api.nvim_buf_set_name(target_bufnr, target_name)
+  else
+    vim.fn.bufload(target_bufnr)
+  end
+
+  vim.bo[target_bufnr].buftype = 'nofile'
+  vim.bo[target_bufnr].bufhidden = 'hide'
+  vim.bo[target_bufnr].swapfile = false
+  vim.bo[target_bufnr].modifiable = true
+  vim.api.nvim_buf_set_lines(
+    target_bufnr,
+    0,
+    -1,
+    false,
+    vim.api.nvim_buf_get_lines(source_bufnr, 0, -1, false)
+  )
+  vim.bo[target_bufnr].modified = false
+  vim.bo[target_bufnr].modifiable = false
+  vim.bo[target_bufnr].readonly = true
+  vim.bo[target_bufnr].filetype = vim.bo[source_bufnr].filetype
+
+  return target_bufnr
+end
+
+local function set_cursor_safely(cursor)
+  local line_count = vim.api.nvim_buf_line_count(0)
+  local line = math.min(cursor[1], line_count)
+  local line_text = vim.api.nvim_buf_get_lines(0, line - 1, line, false)[1] or ''
+  local column = math.min(cursor[2], math.max(#line_text - 1, 0))
+
+  pcall(vim.api.nvim_win_set_cursor, 0, { line, column })
+end
+
+local function open_file_normally(path, cursor)
+  local temp_bufnr = focus_previous_non_diffview_tab()
+
+  vim.cmd('keepalt edit ' .. vim.fn.fnameescape(path))
+
+  delete_temp_buffer(temp_bufnr)
+  reset_plain_file_window()
+  if cursor then set_cursor_safely(cursor) end
+end
+
+local function diffview_current_worktree_path(diffview_lib)
+  local view = diffview_lib.get_current_view()
+  if not view then return end
+
+  local ok, file = pcall(function()
+    if view.infer_cur_file then return view:infer_cur_file() end
+  end)
+
+  if ok and file and file.absolute_path and vim.fn.filereadable(file.absolute_path) == 1 then
+    return file.absolute_path
+  end
+
+  return worktree_path_from_diffview_buffer(vim.api.nvim_get_current_buf())
+end
+
+local function open_diffview_side_normally()
+  local ok, diffview_lib = pcall(require, 'diffview.lib')
+  if not (ok and diffview_lib.get_current_view()) then
+    pcall(vim.cmd, 'normal! gf')
+    return
+  end
+
+  local source_bufnr = vim.api.nvim_get_current_buf()
+  local source_name = vim.api.nvim_buf_get_name(source_bufnr)
+  local cursor = vim.api.nvim_win_get_cursor(0)
+
+  if source_name == '' or source_name == 'diffview://null' then
+    vim.notify('No file version available for this Diffview pane', vim.log.levels.WARN)
+    return
+  end
+
+  if vim.fn.filereadable(source_name) == 1 then
+    open_file_normally(source_name, cursor)
+    return
+  end
+
+  local temp_bufnr = focus_previous_non_diffview_tab()
+  vim.api.nvim_win_set_buf(0, diffview_snapshot_buffer(source_bufnr))
+
+  delete_temp_buffer(temp_bufnr)
+  reset_plain_file_window()
+  set_cursor_safely(cursor)
+end
+
+local function open_diffview_worktree_normally()
+  local ok, diffview_lib = pcall(require, 'diffview.lib')
+  if not (ok and diffview_lib.get_current_view()) then
+    pcall(vim.cmd, 'normal! gf')
+    return
+  end
+
+  local path = diffview_current_worktree_path(diffview_lib)
+  if not path then
+    vim.notify('Latest version does not exist on disk for this Diffview entry', vim.log.levels.WARN)
+    return
+  end
+
+  open_file_normally(path, vim.api.nvim_win_get_cursor(0))
 end
 
 local function load_worktree_buffer(path)
@@ -320,6 +485,18 @@ require('diffview').setup {
   default_args = {
     DiffviewOpen = { '--imply-local' },
   },
+  keymaps = {
+    view = {
+      { 'n', 'gf', open_diffview_side_normally, { desc = 'Open this Diffview side normally' } },
+      { 'n', 'gF', open_diffview_worktree_normally, { desc = 'Open latest version normally' } },
+    },
+    file_panel = {
+      { 'n', 'gF', open_diffview_worktree_normally, { desc = 'Open latest version normally' } },
+    },
+    file_history_panel = {
+      { 'n', 'gF', open_diffview_worktree_normally, { desc = 'Open latest version normally' } },
+    },
+  },
   hooks = {
     diff_buf_read = function()
       simplify_diffview_window()
@@ -330,6 +507,13 @@ require('diffview').setup {
     end,
   },
 }
+
+highlight_diffview_delete_fillers()
+
+vim.api.nvim_create_autocmd('ColorScheme', {
+  group = vim.api.nvim_create_augroup('diffview-delete-fillers', { clear = true }),
+  callback = function() vim.schedule(highlight_diffview_delete_fillers) end,
+})
 
 require('neogit').setup {
   integrations = {
