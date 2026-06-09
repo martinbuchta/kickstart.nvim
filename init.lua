@@ -857,6 +857,12 @@ do
       },
     },
 
+    html = {},
+    cssls = {},
+    jsonls = {},
+    yamlls = {},
+    emmet_language_server = {},
+
     stylua = {}, -- Used to format Lua code
 
     postgres_lsp = {
