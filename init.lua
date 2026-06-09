@@ -834,18 +834,36 @@ do
   -- Enable the following language servers
   --  Feel free to add/remove any LSPs that you want here. They will automatically be installed.
   --  See `:help lsp-config` for information about keys and how to configure
+  local ts_inlay_hints = {
+    parameterNames = { enabled = 'literals' },
+    parameterTypes = { enabled = true },
+    variableTypes = { enabled = false },
+    propertyDeclarationTypes = { enabled = true },
+    functionLikeReturnTypes = { enabled = true },
+    enumMemberValues = { enabled = true },
+  }
+  local ts_preferences = {
+    includePackageJsonAutoImports = 'auto',
+  }
+
   ---@type table<string, vim.lsp.Config>
   local servers = {
     -- clangd = {},
     -- gopls = {},
     -- pyright = {},
     -- rust_analyzer = {},
-    --
-    -- Some languages (like typescript) have entire language plugins that can be useful:
-    --    https://github.com/pmizio/typescript-tools.nvim
-    --
-    -- But for many setups, the LSP (`ts_ls`) will work just fine
-    ts_ls = {},
+    vtsls = {
+      settings = {
+        typescript = {
+          inlayHints = ts_inlay_hints,
+          preferences = ts_preferences,
+        },
+        javascript = {
+          inlayHints = ts_inlay_hints,
+          preferences = ts_preferences,
+        },
+      },
+    },
 
     eslint = {},
 
