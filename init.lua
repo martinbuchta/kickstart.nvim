@@ -849,6 +849,14 @@ do
 
     eslint = {},
 
+    tailwindcss = {
+      settings = {
+        tailwindCSS = {
+          classFunctions = { 'cn', 'clsx', 'cva' },
+        },
+      },
+    },
+
     stylua = {}, -- Used to format Lua code
 
     postgres_lsp = {
