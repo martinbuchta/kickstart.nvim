@@ -1025,7 +1025,12 @@ end
 -- Solution build, run, and test workflows
 -- ============================================================
 do
-  vim.pack.add { gh 'GustavEikaas/easy-dotnet.nvim' }
+  vim.pack.add {
+    gh 'GustavEikaas/easy-dotnet.nvim',
+    gh 'mfussenegger/nvim-dap',
+    gh 'rcarriga/nvim-dap-ui',
+    gh 'nvim-neotest/nvim-nio',
+  }
 
   require('easy-dotnet').setup {
     picker = 'telescope',
@@ -1033,7 +1038,7 @@ do
       enabled = false, -- Roslyn is configured in the LSP section above.
     },
     debugger = {
-      auto_register_dap = false,
+      auto_register_dap = true,
     },
     test_runner = {
       auto_start_testrunner = false,
@@ -1045,9 +1050,27 @@ do
     return function() vim.cmd('Dotnet ' .. command) end
   end
   vim.keymap.set('n', '<leader>db', dotnet 'build solution quickfix', { desc = '[D]otnet [B]uild solution' })
+  vim.keymap.set('n', '<leader>dd', dotnet 'debug', { desc = '[D]otnet [D]ebug project' })
   vim.keymap.set('n', '<leader>dr', dotnet 'run', { desc = '[D]otnet [R]un project' })
   vim.keymap.set('n', '<leader>dt', dotnet 'test solution', { desc = '[D]otnet [T]est solution' })
   vim.keymap.set('n', '<leader>dT', dotnet 'testrunner', { desc = '[D]otnet [T]est runner' })
+
+  local dap = require 'dap'
+  local dapui = require 'dapui'
+  dapui.setup {}
+
+  dap.listeners.after.event_initialized['dapui'] = dapui.open
+  dap.listeners.before.event_terminated['dapui'] = dapui.close
+  dap.listeners.before.event_exited['dapui'] = dapui.close
+
+  vim.keymap.set('n', '<F5>', dap.continue, { desc = 'Debug: Start/continue' })
+  vim.keymap.set('n', '<F10>', dap.step_over, { desc = 'Debug: Step over' })
+  vim.keymap.set('n', '<F11>', dap.step_into, { desc = 'Debug: Step into' })
+  vim.keymap.set('n', '<F12>', dap.step_out, { desc = 'Debug: Step out' })
+  vim.keymap.set('n', '<F7>', dapui.toggle, { desc = 'Debug: Toggle UI' })
+  vim.keymap.set('n', '<leader>b', dap.toggle_breakpoint, { desc = 'Debug: Toggle breakpoint' })
+  vim.keymap.set('n', '<leader>B', function() dap.set_breakpoint(vim.fn.input 'Breakpoint condition: ') end, { desc = 'Debug: Conditional breakpoint' })
+  vim.keymap.set('n', '<leader>dR', dap.repl.toggle, { desc = '[D]ebug [R]EPL' })
 end
 
 -- ============================================================
