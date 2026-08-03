@@ -92,6 +92,11 @@ do
   -- Enable faster startup by caching compiled Lua modules
   vim.loader.enable()
 
+  -- GUI terminals may not inherit paths added by the .NET macOS installer.
+  if vim.fn.executable 'dotnet' == 0 and vim.fn.executable '/usr/local/share/dotnet/dotnet' == 1 then
+    vim.env.PATH = '/usr/local/share/dotnet:' .. (vim.env.PATH or '')
+  end
+
   -- Set <space> as the leader key
   -- See `:help mapleader`
   --  NOTE: Must happen before plugins are loaded (otherwise wrong leader will be used)
@@ -972,10 +977,16 @@ do
     gh 'mason-org/mason.nvim',
     gh 'mason-org/mason-lspconfig.nvim',
     gh 'WhoIsSethDaniel/mason-tool-installer.nvim',
+    gh 'seblyng/roslyn.nvim',
   }
 
   -- Automatically install LSPs and related tools to stdpath for Neovim
-  require('mason').setup {}
+  require('mason').setup {
+    registries = {
+      'github:mason-org/mason-registry',
+      'github:Crashdummyy/mason-registry',
+    },
+  }
 
   -- Ensure the servers and tools above are installed
   --
@@ -989,9 +1000,14 @@ do
     -- You can add other tools here that you want Mason to install
     'prettierd',
     'prettier',
+    'roslyn',
   })
 
   require('mason-tool-installer').setup { ensure_installed = ensure_installed }
+
+  vim.lsp.config('roslyn', {
+    cmd = { 'roslyn', '--stdio' },
+  })
 
   for name, server in pairs(servers) do
     vim.lsp.config(name, server)
@@ -1012,6 +1028,7 @@ do
     format_on_save = function(bufnr)
       -- You can specify filetypes to autoformat on save here:
       local enabled_filetypes = {
+        cs = true,
         css = true,
         html = true,
         javascript = true,
@@ -1026,7 +1043,9 @@ do
         yaml = true,
       }
       if enabled_filetypes[vim.bo[bufnr].filetype] then
-        return { timeout_ms = 500 }
+        return {
+          timeout_ms = vim.bo[bufnr].filetype == 'cs' and 2000 or 500,
+        }
       else
         return nil
       end
