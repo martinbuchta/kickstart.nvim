@@ -22,6 +22,10 @@
       "rev": "4516612fe98ff56ae0415a259ff6361a89419b0a",
       "src": "https://github.com/sindrets/diffview.nvim"
     },
+    "easy-dotnet.nvim": {
+      "rev": "d6a5360475af1a617a03716e984a1b5995997534",
+      "src": "https://github.com/GustavEikaas/easy-dotnet.nvim"
+    },
     "fidget.nvim": {
       "rev": "82404b196e73a00b1727a91903beef5ddc319d22",
       "src": "https://github.com/j-hui/fidget.nvim"

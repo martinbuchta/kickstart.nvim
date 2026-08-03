@@ -97,6 +97,11 @@ do
     vim.env.PATH = '/usr/local/share/dotnet:' .. (vim.env.PATH or '')
   end
 
+  local dotnet_tools = vim.fs.joinpath(vim.uv.os_homedir(), '.dotnet', 'tools')
+  if vim.fn.isdirectory(dotnet_tools) == 1 and not (vim.env.PATH or ''):find(dotnet_tools, 1, true) then
+    vim.env.PATH = dotnet_tools .. ':' .. (vim.env.PATH or '')
+  end
+
   -- Set <space> as the leader key
   -- See `:help mapleader`
   --  NOTE: Must happen before plugins are loaded (otherwise wrong leader will be used)
@@ -1013,6 +1018,36 @@ do
     vim.lsp.config(name, server)
     vim.lsp.enable(name)
   end
+end
+
+-- ============================================================
+-- SECTION 5B: .NET WORKSPACE
+-- Solution build, run, and test workflows
+-- ============================================================
+do
+  vim.pack.add { gh 'GustavEikaas/easy-dotnet.nvim' }
+
+  require('easy-dotnet').setup {
+    picker = 'telescope',
+    lsp = {
+      enabled = false, -- Roslyn is configured in the LSP section above.
+    },
+    debugger = {
+      auto_register_dap = false,
+    },
+    test_runner = {
+      auto_start_testrunner = false,
+      viewmode = 'float',
+    },
+  }
+
+  local dotnet = function(command)
+    return function() vim.cmd('Dotnet ' .. command) end
+  end
+  vim.keymap.set('n', '<leader>db', dotnet 'build solution quickfix', { desc = '[D]otnet [B]uild solution' })
+  vim.keymap.set('n', '<leader>dr', dotnet 'run', { desc = '[D]otnet [R]un project' })
+  vim.keymap.set('n', '<leader>dt', dotnet 'test solution', { desc = '[D]otnet [T]est solution' })
+  vim.keymap.set('n', '<leader>dT', dotnet 'testrunner', { desc = '[D]otnet [T]est runner' })
 end
 
 -- ============================================================
