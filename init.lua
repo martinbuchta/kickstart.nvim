@@ -894,11 +894,49 @@ do
     includePackageJsonAutoImports = 'auto',
   }
 
+  local function python_path(root_dir)
+    local virtual_env = vim.env.VIRTUAL_ENV
+    if virtual_env then
+      local executable = vim.fs.joinpath(virtual_env, 'bin', 'python')
+      if vim.fn.executable(executable) == 1 then return executable end
+    end
+
+    for _, directory in ipairs { '.venv', 'venv' } do
+      local executable = vim.fs.joinpath(root_dir, directory, 'bin', 'python')
+      if vim.fn.executable(executable) == 1 then return executable end
+    end
+
+    if vim.fn.executable 'pipenv' == 1 and vim.uv.fs_stat(vim.fs.joinpath(root_dir, 'Pipfile')) then
+      local result = vim.system({ 'pipenv', '--venv' }, { cwd = root_dir, text = true }):wait()
+      if result.code == 0 then
+        local executable = vim.fs.joinpath(vim.trim(result.stdout), 'bin', 'python')
+        if vim.fn.executable(executable) == 1 then return executable end
+      end
+    end
+  end
+
   ---@type table<string, vim.lsp.Config>
   local servers = {
     -- clangd = {},
     -- gopls = {},
-    -- pyright = {},
+    pyright = {
+      before_init = function(_, config)
+        local executable = python_path(config.root_dir)
+        if executable then
+          config.settings.python = vim.tbl_deep_extend('force', config.settings.python or {}, {
+            pythonPath = executable,
+          })
+        end
+      end,
+      settings = {
+        python = {
+          analysis = {
+            diagnosticMode = 'openFilesOnly',
+            typeCheckingMode = 'basic',
+          },
+        },
+      },
+    },
     -- rust_analyzer = {},
     vtsls = {
       settings = {
