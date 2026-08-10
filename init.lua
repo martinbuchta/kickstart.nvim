@@ -937,6 +937,14 @@ do
         },
       },
     },
+    ruff = {
+      on_attach = function(client)
+        -- Pyright owns Python hover information. Keep Ruff focused on
+        -- diagnostics and code actions, and preserve each repository's style.
+        client.server_capabilities.hoverProvider = false
+        client.server_capabilities.documentFormattingProvider = false
+      end,
+    },
     -- rust_analyzer = {},
     vtsls = {
       settings = {
