@@ -1168,17 +1168,11 @@ do
   local debugpy_adapter = vim.fn.exepath 'debugpy-adapter'
   if debugpy_adapter == '' then debugpy_adapter = vim.fs.joinpath(vim.fn.stdpath 'data', 'mason', 'bin', 'debugpy-adapter') end
 
-  local function project_root()
-    return vim.fs.root(0, { 'manage.py', 'Pipfile', 'pyproject.toml', '.git' }) or vim.fn.getcwd()
-  end
+  local function project_root() return vim.fs.root(0, { 'manage.py', 'Pipfile', 'pyproject.toml', '.git' }) or vim.fn.getcwd() end
 
-  local function project_python()
-    return python_path(project_root()) or vim.fn.exepath 'python3'
-  end
+  local function project_python() return python_path(project_root()) or vim.fn.exepath 'python3' end
 
-  local function manage_py()
-    return vim.fs.joinpath(project_root(), 'manage.py')
-  end
+  local function manage_py() return vim.fs.joinpath(project_root(), 'manage.py') end
 
   dap.adapters.python = {
     type = 'executable',
