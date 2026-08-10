@@ -329,6 +329,27 @@ end
 ---@return string
 local function gh(repo) return 'https://github.com/' .. repo end
 
+local function python_path(root_dir)
+  local virtual_env = vim.env.VIRTUAL_ENV
+  if virtual_env then
+    local executable = vim.fs.joinpath(virtual_env, 'bin', 'python')
+    if vim.fn.executable(executable) == 1 then return executable end
+  end
+
+  for _, directory in ipairs { '.venv', 'venv' } do
+    local executable = vim.fs.joinpath(root_dir, directory, 'bin', 'python')
+    if vim.fn.executable(executable) == 1 then return executable end
+  end
+
+  if vim.fn.executable 'pipenv' == 1 and vim.uv.fs_stat(vim.fs.joinpath(root_dir, 'Pipfile')) then
+    local result = vim.system({ 'pipenv', '--venv' }, { cwd = root_dir, text = true }):wait()
+    if result.code == 0 then
+      local executable = vim.fs.joinpath(vim.trim(result.stdout), 'bin', 'python')
+      if vim.fn.executable(executable) == 1 then return executable end
+    end
+  end
+end
+
 -- ============================================================
 -- SECTION 3: UI / CORE UX PLUGINS
 -- guess-indent, gitsigns, which-key, colorscheme, todo-comments, mini modules
@@ -382,6 +403,7 @@ do
     spec = {
       { '<leader>s', group = '[S]earch', mode = { 'n', 'v' } },
       { '<leader>t', group = '[T]oggle' },
+      { '<leader>p', group = '[P]ython' },
       { '<leader>g', group = '[G]it' },
       { '<leader>o', group = 'GitHub [O]cto' },
       { '<leader>h', group = 'Git [H]unk', mode = { 'n', 'v' } }, -- Enable gitsigns recommended keymaps first
@@ -894,27 +916,6 @@ do
     includePackageJsonAutoImports = 'auto',
   }
 
-  local function python_path(root_dir)
-    local virtual_env = vim.env.VIRTUAL_ENV
-    if virtual_env then
-      local executable = vim.fs.joinpath(virtual_env, 'bin', 'python')
-      if vim.fn.executable(executable) == 1 then return executable end
-    end
-
-    for _, directory in ipairs { '.venv', 'venv' } do
-      local executable = vim.fs.joinpath(root_dir, directory, 'bin', 'python')
-      if vim.fn.executable(executable) == 1 then return executable end
-    end
-
-    if vim.fn.executable 'pipenv' == 1 and vim.uv.fs_stat(vim.fs.joinpath(root_dir, 'Pipfile')) then
-      local result = vim.system({ 'pipenv', '--venv' }, { cwd = root_dir, text = true }):wait()
-      if result.code == 0 then
-        local executable = vim.fs.joinpath(vim.trim(result.stdout), 'bin', 'python')
-        if vim.fn.executable(executable) == 1 then return executable end
-      end
-    end
-  end
-
   ---@type table<string, vim.lsp.Config>
   local servers = {
     -- clangd = {},
@@ -1067,7 +1068,43 @@ do
 end
 
 -- ============================================================
--- SECTION 5B: .NET WORKSPACE
+-- SECTION 5B: PYTHON / DJANGO WORKSPACE
+-- Development server, checks, and tests in a terminal
+-- ============================================================
+do
+  local function run_django(args)
+    local root = vim.fs.root(0, { 'manage.py' })
+    if not root then
+      vim.notify('No manage.py found for the current buffer', vim.log.levels.WARN)
+      return
+    end
+
+    local executable = python_path(root) or vim.fn.exepath 'python3'
+    if executable == '' then
+      vim.notify('No Python interpreter found', vim.log.levels.ERROR)
+      return
+    end
+
+    local command = { executable, vim.fs.joinpath(root, 'manage.py') }
+    vim.list_extend(command, args)
+
+    vim.cmd 'botright new'
+    vim.bo.bufhidden = 'wipe'
+    vim.fn.jobstart(command, { cwd = root, term = true })
+    vim.cmd 'startinsert'
+  end
+
+  vim.api.nvim_create_user_command('DjangoRun', function() run_django { 'runserver' } end, { desc = 'Start the Django development server' })
+  vim.api.nvim_create_user_command('DjangoCheck', function() run_django { 'check' } end, { desc = 'Run Django system checks' })
+  vim.api.nvim_create_user_command('DjangoTest', function() run_django { 'test' } end, { desc = 'Run the Django test suite' })
+
+  vim.keymap.set('n', '<leader>pr', '<cmd>DjangoRun<CR>', { desc = '[P]ython Django [R]un server' })
+  vim.keymap.set('n', '<leader>pc', '<cmd>DjangoCheck<CR>', { desc = '[P]ython Django [C]heck' })
+  vim.keymap.set('n', '<leader>pt', '<cmd>DjangoTest<CR>', { desc = '[P]ython Django [T]est' })
+end
+
+-- ============================================================
+-- SECTION 5C: .NET WORKSPACE
 -- Solution build, run, and test workflows
 -- ============================================================
 do
