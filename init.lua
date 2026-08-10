@@ -1052,6 +1052,7 @@ do
     -- You can add other tools here that you want Mason to install
     'prettierd',
     'prettier',
+    'debugpy',
     'roslyn',
   })
 
@@ -1154,6 +1155,64 @@ do
   vim.keymap.set('n', '<leader>b', dap.toggle_breakpoint, { desc = 'Debug: Toggle breakpoint' })
   vim.keymap.set('n', '<leader>B', function() dap.set_breakpoint(vim.fn.input 'Breakpoint condition: ') end, { desc = 'Debug: Conditional breakpoint' })
   vim.keymap.set('n', '<leader>dR', dap.repl.toggle, { desc = '[D]ebug [R]EPL' })
+end
+
+-- ============================================================
+-- SECTION 5D: PYTHON DEBUGGING
+-- Python files, Django development server, and Django tests
+-- ============================================================
+do
+  local dap = require 'dap'
+  local debugpy_adapter = vim.fn.exepath 'debugpy-adapter'
+  if debugpy_adapter == '' then debugpy_adapter = vim.fs.joinpath(vim.fn.stdpath 'data', 'mason', 'bin', 'debugpy-adapter') end
+
+  local function project_root()
+    return vim.fs.root(0, { 'manage.py', 'Pipfile', 'pyproject.toml', '.git' }) or vim.fn.getcwd()
+  end
+
+  local function project_python()
+    return python_path(project_root()) or vim.fn.exepath 'python3'
+  end
+
+  local function manage_py()
+    return vim.fs.joinpath(project_root(), 'manage.py')
+  end
+
+  dap.adapters.python = {
+    type = 'executable',
+    command = debugpy_adapter,
+  }
+
+  dap.configurations.python = {
+    {
+      type = 'python',
+      request = 'launch',
+      name = 'Python: current file',
+      program = '${file}',
+      cwd = project_root,
+      pythonPath = project_python,
+    },
+    {
+      type = 'python',
+      request = 'launch',
+      name = 'Django: development server',
+      program = manage_py,
+      args = { 'runserver', '--noreload' },
+      cwd = project_root,
+      pythonPath = project_python,
+      django = true,
+    },
+    {
+      type = 'python',
+      request = 'launch',
+      name = 'Django: tests',
+      program = manage_py,
+      args = { 'test', '--keepdb' },
+      cwd = project_root,
+      pythonPath = project_python,
+      django = true,
+    },
+  }
 end
 
 -- ============================================================
